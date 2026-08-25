@@ -11,28 +11,36 @@ _BASE = "https://carone.com.ar"
 _HEADERS = {
     "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",
     "Referer": "https://carone.com.ar/comprar",
-    "x-v6-country": "ar"
 }
 
 def get_available_brands() -> list[str]:
     """
-    Extrae dinámicamente las marcas desde el State de Next.js en la página principal.
+    Extrae las marcas desde el bloque catalogFilters que aparece en el código fuente.
     """
     url = f"{_BASE}/comprar"
     try:
         resp = requests.get(url, headers=_HEADERS, timeout=20)
-        # Buscamos el listado de opciones del filtro de marcas
-        pattern = r'\"attribute_code\":\"carone_marca\",\"label\":\"Marca\",\"options\":\[(.*?)\]'
-        match = re.search(pattern, resp.text)
+        resp.raise_for_status()
         
-        if match:
-            options_raw = match.group(1)
-            brands = re.findall(r'\"label\":\"(.*?)\"', options_raw)
-            return [b for b in brands if b.strip()]
+        # Esta Regex busca específicamente el patrón que pasaste en el fragmento:
+        # "label":"MARCA","count":N,"__typename":"BrandFilter"
+        # Manejamos los escapes de comillas que usa Next.js
+        brand_pattern = r'\\"label\\":\\"(.*?)\\",\\"count\\":\d+,\\"__typename\\":\\"BrandFilter\\"'
         
-        # Fallback por si la estructura cambia levemente
-        brands_fallback = re.findall(r'\"carone_marca_data\":\{\"__typename\":\"AttributeOptionOutput\",\"label\":\"(.*?)\"\}', resp.text)
-        return list(dict.fromkeys(brands_fallback))
+        found_brands = re.findall(brand_pattern, resp.text)
+        
+        if not found_brands:
+            # Fallback por si las comillas no están escapadas en la respuesta
+            brand_pattern_alt = r'"label":"(.*?)","count":\d+,"__typename":"BrandFilter"'
+            found_brands = re.findall(brand_pattern_alt, resp.text)
+
+        # Limpiamos y quitamos duplicados
+        resultado = list(dict.fromkeys([b for b in found_brands if b.strip()]))
+        
+        if resultado:
+            logger.info(f"[carone] Se detectaron {len(resultado)} marcas (incluyendo {resultado[:3]})")
+        return resultado
+
     except Exception as e:
         logger.error(f"[carone] Error descubriendo marcas: {e}")
         return []
@@ -44,33 +52,27 @@ def search(marca: str = None, modelo: str = None, limit: int = 50) -> list[dict]
     results = []
     page = 1
     
-    # Construcción de la ruta base
-    path = "/comprar/usados"
-    if marca:
-        # Normalizar marca para la URL (ej: Mercedes Benz -> mercedes-benz)
-        path += f"/{marca.lower().replace(' ', '-')}"
+    # Normalización del nombre de marca para la URL
+    # Ej: "Mercedes Benz" -> "mercedes-benz"
+    marca_url = marca.lower().replace(" ", "-") if marca else ""
+    path = f"/comprar/usados/{marca_url}" if marca_url else "/comprar/usados"
     
     while len(results) < limit:
-        # Carone usa el parámetro ?p=N para paginar
         url = f"{_BASE}{path}?p={page}"
         
         try:
-            logger.info(f"[carone] Consultando página {page} de {marca or 'Usados'}...")
             resp = requests.get(url, headers=_HEADERS, timeout=15)
-            
-            # Extraemos los bloques de productos (vienen hidratados en el HTML)
+            # Extraemos los productos usando la misma lógica de bloques
             items_data = re.findall(r'\"product\":({.*?\"__typename\":\"SimpleProduct\"})', resp.text)
             
             if not items_data:
-                logger.info(f"[carone] No hay más resultados en la página {page}.")
                 break
 
             for item_json in items_data:
-                if len(results) >= limit:
-                    break
+                if len(results) >= limit: break
                 
                 try:
-                    # Limpiamos el JSON (Next.js escapa comillas con \")
+                    # Limpiamos el JSON de escapes
                     clean_json = item_json.replace('\\"', '"')
                     data = json.loads(clean_json)
                     
@@ -79,7 +81,7 @@ def search(marca: str = None, modelo: str = None, limit: int = 50) -> list[dict]
                     listing = {
                         "source": "carone",
                         "source_listing_id": str(data.get("sku") or data.get("id")),
-                        "make": data.get("carone_marca_data", {}).get("label"),
+                        "make": data.get("carone_marca_data", {}).get("label", marca),
                         "model": data.get("carone_modelo_data", {}).get("label"),
                         "version": data.get("carone_version_description"),
                         "year": int(as_number(data.get("carone_year"))),
@@ -97,13 +99,10 @@ def search(marca: str = None, modelo: str = None, limit: int = 50) -> list[dict]
                         "collected_at": datetime.now().isoformat()
                     }
                     results.append(listing)
-                except Exception as e:
+                except:
                     continue
             
-            # Si trajimos menos de 10 productos (aprox), es probable que sea la última página
-            if len(items_data) < 10:
-                break
-                
+            if len(items_data) < 5: break # No hay más páginas
             page += 1
             
         except Exception as e:
