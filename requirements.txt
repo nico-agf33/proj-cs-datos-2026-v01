@@ -1,0 +1,16 @@
+# requirements.txt — Dependencias mínimas
+
+# Core de datos
+pandas>=2.0
+requests>=2.31
+
+# Scraping (Necesario para DeRuedas y V6)
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
+
+# Testing
+pytest>=8.0.0
+
+# Variables de entorno y config
+python-dotenv>=1.0
+pyyaml>=6.0

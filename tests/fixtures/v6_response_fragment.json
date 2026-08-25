@@ -1,0 +1,19 @@
+{
+  "uid": "test-v6-123",
+  "brand": "Ford",
+  "model": "Mustang",
+  "version": "GT",
+  "year": "2025",
+  "kilometers": "15000",
+  "price": "58500",
+  "currency": "USD",
+  "specs": {
+    "mecanica": {
+      "potencia_hp": "487",
+      "torque_nm": "560",
+      "caja_tipo": "AT",
+      "traccion": "AWD",
+      "combustible": "Eléctrico"
+    }
+  }
+}
