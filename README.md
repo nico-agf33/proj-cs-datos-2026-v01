@@ -1,60 +1,51 @@
-# Proyecto Integrador — Ciencia de Datos 2026  
-## Tasación de Vehículos
+# Proyecto Integrador — Ciencia de Datos 2026 (Tasación de Vehículos)
 
 Este repositorio contiene la infraestructura de **Ingeniería de Datos** para el Proyecto Integrador de la cátedra de **Ciencia de Datos 2026 (UTN FRM)**.
 
-El objetivo principal es la construcción de un **pipeline automatizado** que recolecta, estandariza y exporta datos técnicos y precios de vehículos (usados y 0 km) en Argentina, para alimentar un futuro sistema de **tasación automatizada**.
+El objetivo es la construcción de un **pipeline automatizado y reproducible** que recolecta, estandariza y exporta datos técnicos y precios de vehículos en Argentina, proporcionando un dataset consistente para alimentar un futuro sistema de **tasación automatizada**.
 
-### Estructura del dataset
+## Principios del Dataset
 
-El dataset sigue el principio de **Tidy Data**:
-
-> **1 vehículo = 1 fila**
-
-Los registros contienen atributos técnicos y comerciales relevantes para el futuro modelo de tasación.
+* **Tidy Data:** 1 vehículo publicado = 1 fila.
+* **Datos en vivo:** la utilidad consulta las fuentes en tiempo real, reflejando variaciones de stock y precios de mercado.
+* **Riqueza técnica:** extracción de atributos de ingeniería como potencia, tracción, motor y consumo para una valoración más precisa.
 
 ---
 
-## 🚀 Capacidades actuales
+## Capacidades Actuales
 
-### Ingestión híbrida
+### Ingestión Híbrida y Masiva
 
-- **V6:** extracción de objetos JSON (Next.js) para obtener especificaciones técnicas de alta precisión:
-  - Torque
-  - Potencia (HP)
-  - Consumo
+* **Carone (Alta Fidelidad):** consulta directa a su **API GraphQL**. Provee datos técnicos profesionales de fichas de fábrica y constituye la fuente primaria por su velocidad y precisión.
+* **DeRuedas (Volumen de Mercado):** scraping de microdatos **Schema.org** y parsing de HTML. Es la fuente principal para capturar la realidad del mercado de vehículos usados y la dispersión de precios, especialmente en la región de Cuyo.
 
-- **DeRuedas:** scraping de microdatos **Schema.org** para capturar información del mercado de vehículos usados.
+### Normalización Automática
 
-### Normalización
+El módulo `normalize.py` garantiza la consistencia entre las diferentes fuentes:
 
-Limpieza y estandarización de variables críticas:
-
-- Kilometraje → entero
-- Potencia → `float`
-- Unificación de monedas
-
-### Exportación
-
-Generación de archivos en:
-
-- CSV
-- JSONL
-- Metadatos de la corrida
+* **Precios:** detección automática de moneda (`USD` / `ARS`) mediante el análisis del texto renderizado.
+* **Motorización:** conversión de cilindrada de `cc` a litros (ejemplo: `1600` → `1.6 lts`).
+* **Consumo:** estandarización del formato a `lts / 100 km`.
+* **Limpieza:** eliminación de acentos y caracteres especiales.
+* **Kilometraje y potencia:** normalización a valores numéricos (`int` / `float`).
 
 ---
 
-## 🛠️ Requisitos y setup
+## Instalación y Setup
 
 ### Requisitos
 
-- **Python 3.11+**
-- `requests`
-- `beautifulsoup4`
-- `lxml`
-- `pandas`
+* **Python 3.11+**
+* Dependencias:
 
-### Instalación — Linux / macOS
+  * `pandas`
+  * `requests`
+  * `beautifulsoup4`
+  * `lxml`
+
+### Instalación
+
+Compatible con **Linux, macOS y Windows**.
 
 ```bash
 git clone https://github.com/nico-agf33/proj-cs-datos-2026.git
@@ -63,146 +54,120 @@ cd proj-cs-datos-2026
 python3 -m venv .venv
 source .venv/bin/activate
 
-pip install -r requirements.txt
-```
-
-### Instalación — Windows
-
-Abrir **PowerShell** y ejecutar:
-
-```powershell
-git clone https://github.com/nico-agf33/proj-cs-datos-2026.git
-cd proj-cs-datos-2026
-
-python -m venv .venv
-.venv\Scripts\activate
+# En Windows:
+# .venv\Scripts\activate
 
 pip install -r requirements.txt
 ```
 
 ---
 
-## 📊 Uso del CLI — Ingesta
+## Uso de la Utilidad
 
-La obtención de datos se realiza mediante **flags de línea de comandos**. No se requiere interfaz gráfica.
+El proyecto ofrece dos interfaces de línea de comandos (CLI).
 
-| Flag | Obligatorio | Descripción |
-|---|:---:|---|
-| `--marca` | **Sí** | Marca del vehículo. Ej.: `Ford`, `Fiat`, `BMW` |
-| `--modelo` | **Sí** | Modelo del vehículo. Ej.: `Cronos`, `Mustang` |
-| `--limit` | No | Máximo de avisos a recolectar por fuente. Default: `50` |
-| `--sources` | No | Fuentes a consultar: `deruedas`, `v6`. Default: ambas |
-| `--output` | No | Directorio para archivos crudos. Default: `data/raw` |
+### 1. Ingesta Específica (`collect.py`)
 
-### Ejemplos de ejecución
+Permite capturar modelos puntuales y validar los datos técnicos obtenidos.
 
-#### Recolectar datos para un Ford Fiesta
+| Flag        | Obligatorio | Descripción                                                          |
+| ----------- | :---------: | -------------------------------------------------------------------- |
+| `--marca`   |    **Sí**   | Marca del vehículo.                                                  |
+| `--modelo`  |    **Sí**   | Modelo del vehículo.                                                 |
+| `--limit`   |      No     | Máximo de registros por fuente. Default: `50`.                       |
+| `--sources` |      No     | Fuentes a consultar: `deruedas`, `carone` o `both`. Default: `both`. |
 
-```bash
-python3 -m src.ingest.collect \
-    --marca Ford \
-    --modelo "Fiesta Kinetic Design"
-```
-
-#### Recolectar 100 avisos de Fiat Cronos solamente desde DeRuedas
+#### Ejemplo
 
 ```bash
 python3 -m src.ingest.collect \
-    --marca Fiat \
-    --modelo Cronos \
-    --limit 100 \
-    --sources deruedas
+    --marca BMW \
+    --modelo "Serie 1" \
+    --limit 10
 ```
 
 ---
 
-## 📋 Esquema de datos — Features
+### 2. Ingesta Masiva y Dinámica (`download.py`)
 
-El dataset generado incluye las siguientes columnas fundamentales para el modelo de tasación:
+Está diseñada para cumplir con el volumen de **5.000 a 20.000 registros** requerido por la cátedra.
 
-| Columna | Descripción |
-|---|---|
-| `source` | Portal de origen (`deruedas` o `v6`) |
-| `make` | Marca del vehículo |
-| `model` | Modelo |
-| `version` | Versión específica o trim |
-| `year` | Año de fabricación |
-| `mileage` | Kilometraje (numérico) |
-| `price` | Precio de venta (limpio) |
-| `currency` | Moneda (`ARS` o `USD`) |
-| `power_hp` | Potencia en caballos de fuerza |
-| `torque_nm` | Torque en Newton-metro |
-| `transmission` | Tipo de caja (`Manual` / `Automática`) |
-| `traction` | Tipo de tracción (`Delantera`, `Trasera`, `Integral`) |
-| `fuel_type` | Tipo de combustible |
-| `location` | Ubicación geográfica del aviso |
-| `url` | Enlace a la ficha pública |
-| `collected_at` | Timestamp de la descarga (ISO UTC) |
+El proceso descubre marcas automáticamente y segmenta las búsquedas para evitar alcanzar los límites de los servidores de las fuentes consultadas.
+
+#### Ejemplo
+
+Descarga automatizada de hasta 10.000 registros únicos combinando ambas fuentes:
+
+```bash
+python3 -m src.ingest.download \
+    --total 10000 \
+    --source both
+```
 
 ---
 
-## 📁 Salida de datos
+## Esquema de Datos — Features
 
-Los archivos se generan en:
+El dataset exporta las siguientes columnas críticas para el modelo de tasación:
+
+| Columna        | Descripción                                           |
+| -------------- | ----------------------------------------------------- |
+| `source`       | Portal de origen (`deruedas` / `carone`).             |
+| `make`         | Marca normalizada.                                    |
+| `model`        | Modelo normalizado.                                   |
+| `year`         | Año de fabricación.                                   |
+| `mileage`      | Kilometraje numérico.                                 |
+| `price`        | Valor numérico original.                              |
+| `currency`     | Moneda detectada (`USD` / `ARS`).                     |
+| `engine`       | Cilindrada expresada en litros (ej.: `1.6 lts`).      |
+| `power_hp`     | Potencia en caballos de fuerza.                       |
+| `transmission` | Tipo de caja (`Manual` / `Automática`).               |
+| `traction`     | Tipo de tracción (`Delantera`, `Trasera`, `4x4`).     |
+| `fuel_type`    | Tipo de combustible (`Nafta`, `Diesel`, `Eléctrico`). |
+| `consumption`  | Consumo promedio normalizado.                         |
+| `location`     | Provincia o localidad del aviso.                      |
+| `url`          | Enlace a la ficha pública original.                   |
+| `collected_at` | Timestamp de la captura en formato ISO UTC.           |
+
+---
+
+## Salida de Datos
+
+Los archivos generados se almacenan en:
 
 ```text
 data/raw/
 ```
 
-Esta carpeta está excluida de Git mediante `.gitignore`.
+Esta carpeta se encuentra excluida de Git mediante `.gitignore`.
 
-Para cada corrida se generan los siguientes archivos:
+El pipeline genera tres tipos principales de archivos:
 
-### Dataset CSV
+### CSV
+
+Dataset estructurado y preparado para su utilización con **Pandas** y las etapas posteriores de análisis.
 
 ```text
 {marca}_{modelo}_{YYYYMMDD}.csv
 ```
 
-Dataset listo para ser utilizado con **Pandas**.
+### JSONL
 
-### Datos crudos JSONL
+Respaldo de los objetos crudos obtenidos durante la ingesta.
 
 ```text
 {marca}_{modelo}_{YYYYMMDD}.jsonl
 ```
 
-Registro de objetos crudos obtenidos durante la ingesta.
+### META.json
 
-### Metadatos
+Archivo con estadísticas y metadatos de la ejecución, incluyendo:
+
+* Cantidad total de filas.
+* Cantidad de marcas procesadas.
+* Cantidad de errores.
+* Información general de la ejecución.
 
 ```text
 {marca}_{modelo}_{YYYYMMDD}_meta.json
 ```
-
-Contiene los metadatos de la corrida, incluyendo:
-
-- Cantidad de filas
-- Cantidad de errores
-- Información de la ejecución
-
----
-
-## 📅 Cronograma del proyecto
-
-| Entrega | Fecha | Hito |
-|---|---:|---|
-| Definición | 12/08/2026 | Pregunta de investigación y grupo |
-| **Entrega 1** | **02/09/2026** | **Ingeniería de Datos — Pipeline** |
-| Entrega 2 | 16/09/2026 | Análisis Exploratorio — EDA |
-| Entrega 3 | 14/10/2026 | Modelado Predictivo — Tasador |
-| Entrega 4 | 04/11/2026 | Visualización e Integración Final |
-
----
-
-## 👥 Equipo
-
-**Equipo:** A definir
-
-**Cátedra:** Ciencia de Datos 2026 — UTN FRM
-
----
-
-## 📌 Estado del proyecto
-
-Actualmente el proyecto se encuentra enfocado en la etapa de **Ingeniería de Datos**, con el objetivo de completar el pipeline de recolección, normalización y exportación para la **Entrega 1 — 02/09/2026**.
