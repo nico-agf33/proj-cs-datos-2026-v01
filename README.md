@@ -1,8 +1,4 @@
-# Proyecto Integrador — Ciencia de Datos 2026 (Tasación de Vehículos)
-
-Este repositorio contiene la infraestructura de **Ingeniería de Datos** para el Proyecto Integrador de la cátedra de **Ciencia de Datos 2026 (UTN FRM)**.
-
-El objetivo es la construcción de un **pipeline automatizado y reproducible** que recolecta, estandariza y exporta datos técnicos y precios de vehículos en Argentina, proporcionando un dataset consistente para alimentar un futuro sistema de **tasación automatizada**.
+# Ciencia de Datos 2026 
 
 ## Principios del Dataset
 
