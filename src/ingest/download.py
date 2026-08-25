@@ -29,9 +29,10 @@ def main():
     jsonl_path = out_dir / f"{filename_base}.jsonl"
 
     # Determinar qué colectores ejecutar
+    # IMPORTANTE: Cambiamos el orden. Carone primero por calidad y velocidad.
     sources_to_process = []
     if args.source == "both":
-        sources_to_process = [deruedas, carone]
+        sources_to_process = [carone, deruedas] 
     elif args.source == "deruedas":
         sources_to_process = [deruedas]
     else:
@@ -52,7 +53,6 @@ def main():
         
         if not marcas:
             logger.warning(f"[{src_name}] No se detectaron marcas individuales. Usando BÚSQUEDA GLOBAL.")
-            # Al poner [None], el bucle de abajo se ejecutará una vez con marca=None
             marcas = [None]
         else:
             logger.info(f"[{src_name}] Se detectaron {len(marcas)} marcas disponibles.")
@@ -66,22 +66,21 @@ def main():
             msg_marca = marca if marca else "GLOBAL"
             logger.info(f"[PIPELINE] Fuente: {src_name} | Segmento: {msg_marca} | Progreso: {len(all_data)}/{args.total}")
             
-            # Llamada al collector (ambos aceptan marca=None para feed global)
+            # Llamada al collector
             lote = src.search(marca=marca, limit=min(1500, faltantes))
             
             if lote:
                 for item in lote:
-                    # Deduplicación en tiempo real por ID original
+                    # Deduplicación por ID original
                     if item['source_listing_id'] not in seen_ids:
                         all_data.append(item)
                         seen_ids.add(item['source_listing_id'])
                 
-                # 3. Guardado Incremental (Resiliencia ante cortes)
+                # 3. Guardado Incremental (CSV y JSONL)
                 if all_data:
                     df_temp = pd.DataFrame(all_data)
                     df_temp.to_csv(csv_path, index=False, encoding="utf-8")
                     
-                    # Exportar también a JSONL como backup de crudos
                     with open(jsonl_path, "w", encoding="utf-8") as f:
                         for row in all_data:
                             f.write(json.dumps(row, ensure_ascii=False) + "\n")
