@@ -9,28 +9,27 @@ logger = logging.getLogger(__name__)
 
 _BASE = "https://carone.com.ar"
 _HEADERS = {
-    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "x-v6-country": "ar",
-    "Referer": "https://carone.com.ar/"
+    "Referer": "https://carone.com.ar/comprar"
 }
 
 def get_available_brands() -> list[str]:
     """
-    Extrae marcas desde el bloque catalogFilters detectado en el HTML.
+    Extrae las marcas desde el catálogo general de Carone.
     """
     url = f"{_BASE}/comprar?carOptions=usados"
     try:
         resp = requests.get(url, headers=_HEADERS, timeout=20)
         resp.raise_for_status()
         
-        # Regex para capturar marcas del JSON de Apollo (BrandFilter)
-        # Buscamos: "label":"Chevrolet","count":75
+        # Buscamos el bloque de marcas en los filtros (BrandFilter)
+        # Probamos con y sin escapes de comillas
         brand_pattern = r'\\"label\\":\\"(.*?)\\",\\"count\\":\d+,\\"__typename\\":\\"BrandFilter\\"'
         found = re.findall(brand_pattern, resp.text)
         
         if not found:
-            # Fallback para formato sin escapes
             found = re.findall(r'"label":"(.*?)","count":\d+,"__typename":"BrandFilter"', resp.text)
 
         return list(dict.fromkeys([b for b in found if b.strip()]))
@@ -40,87 +39,87 @@ def get_available_brands() -> list[str]:
 
 def search(marca: str = None, modelo: str = None, limit: int = 50) -> list[dict]:
     """
-    Recorre el catálogo de usados usando la URL y filtros correctos.
+    Busca usados en Carone usando extracción de JSON-LD y marcadores técnicos.
     """
     results = []
     page = 1
     
-    # URL Base observada en el código fuente
+    # URL de búsqueda correcta según el view-source
     base_url = f"{_BASE}/comprar?carOptions=usados"
-    
     if marca:
-        # El sitio usa el nombre de la marca directamente
         base_url += f"&marca={marca.replace(' ', '%20')}"
 
     while len(results) < limit:
-        # Paginación observada: &p=N
         url = f"{base_url}&p={page}"
         try:
             logger.info(f"[carone] Consultando: {url}")
             resp = requests.get(url, headers=_HEADERS, timeout=15)
             resp.raise_for_status()
+            html = resp.text
+
+            # --- ESTRATEGIA 1: Capturar JSON-LD (Schema.org) ---
+            # Estos bloques contienen: Nombre, Precio, Marca, Modelo, Año y KM.
+            # Vienen en etiquetas <script type="application/ld+json">
+            json_ld_blocks = re.findall(r'<script type="application/ld\+json">(.*?)</script>', html, re.DOTALL)
             
-            # --- CAMBIO DE REGEX ---
-            # El fragmento muestra que los datos están en objetos con typename 'ProductCardFragment' 
-            # o dentro de la lista de 'items' de la query 'GetProductsCard'.
-            # Buscamos el patrón del objeto de producto individual:
-            items_data = re.findall(r'(\{\\"id\\":\\"\d+\\",\\"sku\\":\\".*?\\",\\"name\\":\\".*?\\",.*?\\"__typename\\":\\"SimpleProduct\\".*?\})', resp.text)
-            
-            if not items_data:
-                # Intento 2: Búsqueda por SKU
-                items_data = re.findall(r'(\{\\"sku\\":\\".*?\\",\\"name\\":\\".*?\\",.*?\\"carone_year\\":\d+.*?\})', resp.text)
-
-            if not items_data:
-                break
-
-            logger.info(f"[carone] Detectados {len(items_data)} autos en página {page}")
-
-            for item_json in items_data:
-                if len(results) >= limit: break
+            extracted_count = 0
+            for block in json_ld_blocks:
                 try:
-                    # Limpiar JSON de escapes de Next.js
-                    clean_json = item_json.replace('\\"', '"')
-                    data = json.loads(clean_json)
-                    
-                    sku = data.get("sku")
-                    if not sku: continue
-                    
-                    # Evitar duplicados
-                    if any(r['source_listing_id'] == str(sku) for r in results):
+                    data = json.loads(block)
+                    # Solo procesamos si el tipo es 'Car' (ignora Organization y Breadcrumb)
+                    if data.get("@type") != "Car":
                         continue
-
-                    price_info = data.get("price_range", {}).get("maximum_price", {}).get("final_price", {})
                     
-                    listing = {
+                    sku = data.get("url", "").split("-")[-1] # El ID suele estar al final de la URL
+                    
+                    # --- ESTRATEGIA 2: Buscar Specs Técnicas en el "ruido" de Next.js ---
+                    # Buscamos patrones específicos cerca de este SKU en el HTML
+                    potency = re.search(fr'\\"{sku}\\".*?\\"carone_potency\\":\\"(.*?)\\"', html)
+                    engine_cc = re.search(fr'\\"{sku}\\".*?\\"carone_cylinder_capacity\\":(\d+)', html)
+                    trans = re.search(fr'\\"{sku}\\".*?\\"carone_transmission_data\\":\{{.*?\\"label\\":\\"(.*?)\\"\}}', html)
+                    traction = re.search(fr'\\"{sku}\\".*?\\"carone_traction_data\\":\{{.*?\\"label\\":\\"(.*?)\\"\}}', html)
+                    fuel = re.search(fr'\\"{sku}\\".*?\\"carone_fuel_data\\":\{{.*?\\"label\\":\\"(.*?)\\"\}}', html)
+                    
+                    offer = data.get("offers", {})
+                    
+                    item = {
                         "source": "carone",
-                        "source_listing_id": str(sku),
-                        "make": data.get("carone_marca_data", {}).get("label") or marca,
-                        "model": data.get("carone_modelo_data", {}).get("label"),
-                        "version": data.get("carone_version_description", ""),
-                        "year": int(as_number(data.get("carone_year", 0))),
-                        "mileage": int(as_number(data.get("carone_mileage", 0))),
-                        "price": as_number(price_info.get("value", 0)),
-                        "currency": price_info.get("currency", "ARS"),
-                        "engine": cc_to_liters(data.get("carone_cylinder_capacity")),
-                        "power_hp": as_number(data.get("carone_potency")),
-                        "transmission": data.get("carone_transmission_data", {}).get("label"),
-                        "traction": data.get("carone_traction_data", {}).get("label"),
-                        "fuel_type": data.get("carone_fuel_data", {}).get("label"),
-                        "consumption": format_consumption_carone(data.get("carone_consumption")),
-                        "location": data.get("carone_dealer_id", "Buenos Aires"),
-                        "url": f"{_BASE}/comprar/usados/{data.get('url_key')}",
+                        "source_listing_id": sku,
+                        "make": data.get("brand", {}).get("name", marca),
+                        "model": data.get("model"),
+                        "version": data.get("name"),
+                        "year": int(as_number(data.get("vehicleModelDate", 0))),
+                        "mileage": int(as_number(data.get("mileageFromOdometer", {}).get("value", 0))),
+                        "price": float(as_number(offer.get("price", 0))),
+                        "currency": offer.get("priceCurrency", "ARS"),
+                        # Datos técnicos (Regex directo al HTML de Next.js)
+                        "engine": cc_to_liters(engine_cc.group(1)) if engine_cc else None,
+                        "power_hp": as_number(potency.group(1)) if potency else None,
+                        "transmission": trans.group(1) if trans else None,
+                        "traction": traction.group(1) if traction else None,
+                        "fuel_type": fuel.group(1) if fuel else None,
+                        "consumption": None, # Difícil de sacar del listado
+                        "location": "Buenos Aires (CarOne)",
+                        "url": data.get("url"),
                         "collected_at": datetime.now().isoformat()
                     }
-                    results.append(listing)
-                except:
+                    
+                    # Evitar duplicados
+                    if not any(r['source_listing_id'] == item['source_listing_id'] for r in results):
+                        results.append(item)
+                        extracted_count += 1
+                        
+                except Exception:
                     continue
+
+            if extracted_count == 0:
+                break # No encontramos más autos en esta página
             
-            # Carone tiene páginas de 9 o 20 productos. Si vienen pocos, es el final.
-            if len(items_data) < 5: break
+            logger.info(f"[carone] Se capturaron {extracted_count} autos de la página {page}.")
             page += 1
             
         except Exception as e:
-            logger.error(f"[carone] Error en página {page}: {e}")
+            logger.error(f"[carone] Error en p{page}: {e}")
             break
             
     return results
