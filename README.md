@@ -90,13 +90,11 @@ python3 -m src.ingest.collect \
 
 ### 2. Ingesta Masiva y Dinámica (`download.py`)
 
-Está diseñada para cumplir con el volumen de **5.000 a 20.000 registros** requerido por la cátedra.
-
 El proceso descubre marcas automáticamente y segmenta las búsquedas para evitar alcanzar los límites de los servidores de las fuentes consultadas.
 
 #### Ejemplo
 
-Descarga automatizada de hasta 10.000 registros únicos combinando ambas fuentes:
+Descarga automatizada de registros únicos combinando ambas fuentes (limite 10000):
 
 ```bash
 python3 -m src.ingest.download \
