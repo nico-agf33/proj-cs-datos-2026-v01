@@ -12,7 +12,7 @@
 
 ### Ingestión Híbrida y Masiva
 
-* **Carone (Alta Fidelidad):** consulta directa a su **API GraphQL**. Provee datos técnicos profesionales de fichas de fábrica y constituye la fuente primaria por su velocidad y precisión.
+* **Carone (Alta Fidelidad):** consulta directa a su **API GraphQL**. Provee datos técnicos profesionales de fichas de fábrica.
 * **DeRuedas (Volumen de Mercado):** scraping de microdatos **Schema.org** y parsing de HTML. Es la fuente principal para capturar la realidad del mercado de vehículos usados y la dispersión de precios, especialmente en la región de Cuyo.
 
 ### Normalización Automática
