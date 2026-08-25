@@ -1,119 +1,136 @@
 import requests
-import re
 import json
 import logging
-import time
 from datetime import datetime
 from ..normalize import as_number, cc_to_liters, format_consumption_carone
 
 logger = logging.getLogger(__name__)
 
-_BASE = "https://carone.com.ar"
+_GRAPHQL_URL = "https://carone.com.ar/api/graphql"
+
+# Headers exactos del cURL para evitar bloqueos
 _HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0",
+    "Content-Type": "application/json",
     "x-v6-country": "ar",
+    "Origin": "https://carone.com.ar",
     "Referer": "https://carone.com.ar/comprar?carOptions=usados"
 }
 
 def get_available_brands() -> list[str]:
-    """Extrae marcas del objeto catalogFilters en el HTML."""
-    url = f"{_BASE}/comprar?carOptions=usados"
-    try:
-        resp = requests.get(url, headers=_HEADERS, timeout=20)
-        # Buscamos el patrón: "label":"MARCA","count":... "__typename":"BrandFilter"
-        pattern = r'\\"label\\":\\"(.*?)\\",\\"count\\":\d+,\\"__typename\\":\\"BrandFilter\\"'
-        brands = re.findall(pattern, resp.text)
-        return list(dict.fromkeys([b for b in brands if b.strip()]))
-    except Exception as e:
-        logger.error(f"[carone] Error en marcas: {e}")
-        return []
+    """
+    En el nuevo sistema por API, no necesitamos marcas para paginar, 
+    pero la mantenemos por compatibilidad con el orquestador.
+    """
+    return [None] # Devolvemos una lista con None para que download.py haga una sola pasada global
 
 def search(marca: str = None, modelo: str = None, limit: int = 50) -> list[dict]:
+    """
+    Consulta la API GraphQL de Carone de forma paginada.
+    """
     results = []
-    page = 1
-    seen_ids = set() # Para evitar loops infinitos
+    current_page = 1
+    page_size = 20 # Aumentamos a 20 para ir más rápido
     
-    # URL base corregida según el snippet
-    base_url = f"{_BASE}/comprar?carOptions=usados"
+    # Preparamos los filtros de la API
+    # carone_tags_arg: [2] significa USADOS
+    filters = {
+        "stock_status": {"eq": "IN_STOCK"},
+        "carone_tags_arg": {"in": [2]}
+    }
     if marca:
-        base_url += f"&marca={marca.replace(' ', '%20')}"
+        filters["carone_marca_label"] = {"eq": marca}
 
     while len(results) < limit:
-        url = f"{base_url}&p={page}"
-        try:
-            logger.info(f"[carone] Consultando: {url}")
-            resp = requests.get(url, headers=_HEADERS, timeout=15)
-            resp.raise_for_status()
-            
-            # --- REGEX CORREGIDA: Detecta ID numérico o string ---
-            # Buscamos url_key que es lo que necesitamos para ir al detalle
-            keys_found = re.findall(r'\\"url_key\\":\\"(.*?)\\"', resp.text)
-            unique_keys = list(dict.fromkeys(keys_found))
+        # El payload JSON que descubrimos en el cURL
+        payload = {
+            "operationName": "GetProductsCard",
+            "variables": {
+                "q": "",
+                "pageSize": page_size,
+                "currentPage": current_page,
+                "sort": {"created_at": "DESC"},
+                "filter": filters
+            },
+            "query": """
+            query GetProductsCard($q: String!, $pageSize: Int!, $currentPage: Int!, $filter: ProductAttributeFilterInput) {
+              products(search: $q, pageSize: $pageSize, currentPage: $currentPage, filter: $filter) {
+                total_count
+                items {
+                  sku
+                  name
+                  url_key
+                  carone_year
+                  carone_mileage
+                  carone_potency
+                  carone_cylinder_capacity
+                  carone_consumption
+                  carone_marca_data { label }
+                  carone_modelo_data { label }
+                  carone_transmission_data { label }
+                  carone_traction_data { label }
+                  carone_fuel_data { label }
+                  price_range {
+                    maximum_price {
+                      final_price { currency value }
+                    }
+                  }
+                }
+              }
+            }
+            """
+        }
 
-            if not unique_keys:
+        try:
+            logger.info(f"[carone] Pidiendo página {current_page} (Total acumulado: {len(results)})")
+            resp = requests.post(_GRAPHQL_URL, json=payload, headers=_HEADERS, timeout=20)
+            resp.raise_for_status()
+            data = resp.json()
+            
+            products_data = data.get("data", {}).get("products", {})
+            items = products_data.get("items", [])
+            total_available = products_data.get("total_count", 0)
+
+            if not items:
                 break
 
-            new_in_page = 0
-            for key in unique_keys:
+            for item in items:
                 if len(results) >= limit: break
                 
-                # Si ya procesamos esta URL en esta ejecución, es que p=N no está funcionando
-                if key in seen_ids:
-                    continue
+                price_info = item.get("price_range", {}).get("maximum_price", {}).get("final_price", {})
                 
-                seen_ids.add(key)
-                new_in_page += 1
-                
-                # Ir al detalle (donde están los 6 datos técnicos)
-                detail_url = f"{_BASE}/comprar/usados/{key}"
-                time.sleep(0.3)
-                item = _scrape_detail(detail_url)
-                if item:
-                    results.append(item)
+                # Mapeo directo y limpio del JSON de la API
+                row = {
+                    "source": "carone",
+                    "source_listing_id": item.get("sku"),
+                    "make": (item.get("carone_marca_data") or {}).get("label"),
+                    "model": (item.get("carone_modelo_data") or {}).get("label"),
+                    "version": item.get("name"),
+                    "year": int(as_number(item.get("carone_year"))),
+                    "mileage": int(as_number(item.get("carone_mileage"))),
+                    "price": as_number(price_info.get("value")),
+                    "currency": price_info.get("currency", "ARS"),
+                    "engine": cc_to_liters(item.get("carone_cylinder_capacity")),
+                    "power_hp": as_number(item.get("carone_potency")),
+                    "transmission": (item.get("carone_transmission_data") or {}).get("label"),
+                    "traction": (item.get("carone_traction_data") or {}).get("label"),
+                    "fuel_type": (item.get("carone_fuel_data") or {}).get("label"),
+                    "consumption": format_consumption_carone(item.get("carone_consumption")),
+                    "location": "Buenos Aires",
+                    "url": f"https://carone.com.ar/comprar/usados/{item.get('url_key')}",
+                    "collected_at": datetime.now().isoformat()
+                }
+                results.append(row)
 
-            if new_in_page == 0:
-                logger.info(f"[carone] No hay más autos nuevos en p{page}. Fin.")
+            # Si ya bajamos todos los que la API dice que existen, frenamos
+            if len(results) >= total_available or len(items) < page_size:
+                logger.info(f"[carone] Se alcanzó el total de stock disponible ({total_available}).")
                 break
-                
-            page += 1
-            if page > 100: break # Freno de emergencia
+
+            current_page += 1
             
         except Exception as e:
-            logger.error(f"[carone] Error en p{page}: {e}")
+            logger.error(f"[carone] Error en API GraphQL: {e}")
             break
             
     return results
-
-def _scrape_detail(url: str) -> dict | None:
-    try:
-        resp = requests.get(url, headers=_HEADERS, timeout=10)
-        # Capturamos el objeto product completo del detalle
-        pattern = r'\"product\":({.*?\"__typename\":\"SimpleProduct\"})'
-        match = re.search(pattern, resp.text)
-        if not match: return None
-        
-        data = json.loads(match.group(1).replace('\\"', '"'))
-        price_info = data.get("price_range", {}).get("maximum_price", {}).get("final_price", {})
-        
-        return {
-            "source": "carone",
-            "source_listing_id": str(data.get("sku")),
-            "make": data.get("carone_marca_data", {}).get("label"),
-            "model": data.get("carone_modelo_data", {}).get("label"),
-            "version": data.get("carone_version_description"),
-            "year": int(as_number(data.get("carone_year"))),
-            "mileage": int(as_number(data.get("carone_mileage"))),
-            "price": as_number(price_info.get("value")),
-            "currency": price_info.get("currency", "ARS"),
-            "engine": cc_to_liters(data.get("carone_cylinder_capacity")),
-            "power_hp": as_number(data.get("carone_potency")),
-            "transmission": data.get("carone_transmission_data", {}).get("label"),
-            "traction": data.get("carone_traction_data", {}).get("label"),
-            "fuel_type": data.get("carone_fuel_data", {}).get("label"),
-            "consumption": format_consumption_carone(data.get("carone_consumption")),
-            "location": data.get("carone_dealer_id", "Buenos Aires"),
-            "url": url,
-            "collected_at": datetime.now().isoformat()
-        }
-    except:
-        return None
